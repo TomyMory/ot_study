@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>筋紡錘の興奮頻度メカニズム</title>
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif;
+            background-color: #f4f7f6;
+            color: #333;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            font-size: 1.5rem;
+            color: #2c3e50;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+        canvas {
+            background-color: #eef2f5;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            width: 100%;
+            height: auto;
+        }
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 1rem;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            background-color: #3498db;
+            color: white;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        button.active {
+            background-color: #e74c3c;
+            box-shadow: inset 0 3px 5px rgba(0,0,0,0.2);
+        }
+        .description {
+            text-align: left;
+            font-size: 0.95rem;
+            line-height: 1.6;
+            background: #fdfdfd;
+            padding: 15px;
+            border-left: 5px solid #3498db;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>筋紡錘と求心性神経（Ia群）の興奮メカニズム</h1>
+    
+    <canvas id="spindleCanvas" width="800" height="400"></canvas>
+    
+    <div class="controls">
+        <button id="btn-rest" class="active">① 安静時（通常状態）</button>
+        <button id="btn-stretch">② 錘内筋の収縮（両端が収縮・中央が伸展）</button>
+        <button id="btn-slack">③ 筋全体の収縮（筋紡錘がたゆむ）</button>
+    </div>
+
+    <div class="description" id="desc-text">
+        <strong>状態：安静時</strong><br>
+        適度な張力が保たれており、求心性神経（Ia群神経）からは一定のペースで自発的な発火（活動電位）が生じています。
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('spindleCanvas');
+    const ctx = canvas.getContext('2d');
+    const descText = document.getElementById('desc-text');
+
+    // 状態管理変数
+    let targetLength = 500;       // 筋全体の長さ
+    let currentLength = 500;
+    let targetIntrafusalTension = 1; // 錘内筋の緊張度（1: 通常, >1: 伸展, <1: たゆみ）
+    let currentIntrafusalTension = 1;
+    let firingRate = 40;          // 発火間隔（フレーム数）。小さいほど高頻度。
+    let currentFiringRate = 40;
+
+    let actionPotentials = [];
+    let frameCount = 0;
+
+    const buttons = {
+        rest: document.getElementById('btn-rest'),
+        stretch: document.getElementById('btn-stretch'),
+        slack: document.getElementById('btn-slack')
+    };
+
+    function setActiveButton(activeId) {
+        Object.values(buttons).forEach(btn => btn.classList.remove('active'));
+        buttons[activeId].classList.add('active');
+    }
+
+    buttons.rest.addEventListener('click', () => {
+        setActiveButton('rest');
+        targetLength = 500;
+        targetIntrafusalTension = 1;
+        firingRate = 40; // 中程度の頻度
+        descText.innerHTML = "<strong>状態：安静時（通常状態）</strong><br>適度な張力が保たれており、求心性神経（Ia群神経）からはベースラインとなる一定のペースで活動電位が発生しています。";
+    });
+
+    buttons.stretch.addEventListener('click', () => {
+        setActiveButton('stretch');
+        targetLength = 500; // 筋全体の長さはそのまま
+        targetIntrafusalTension = 1.8; // 錘内筋の収縮（中央がピンと張る）
+        firingRate = 10; // 高頻度
+        descText.innerHTML = "<strong>状態：錘内筋の収縮（γ運動ニューロンの興奮など）</strong><br>錘内筋の両極端が収縮することで、中央の感覚受容部（赤道部）が引き伸ばされます。これにより、螺旋状の受容器が物理的刺激を受け、<strong>求心性神経の興奮頻度が急上昇</strong>します。";
+    });
+
+    buttons.slack.addEventListener('click', () => {
+        setActiveButton('slack');
+        targetLength = 350; // 筋全体が短縮
+        targetIntrafusalTension = 0; // たゆむ
+        firingRate = 90; // 低頻度（わずかに発火）
+        descText.innerHTML = "<strong>状態：筋紡錘の短縮（たゆみ）</strong><br>錘外筋（筋全体）が収縮して短くなると、並列している筋紡錘自体も短縮します。錘内筋がたゆんで受容器への張力がなくなるため、<strong>求心性神経の興奮頻度は著しく低下（わずかな発火のみ）</strong>します。";
+    });
+
+    function drawMuscleSpindle(cx, cy, length, tension) {
+        const halfL = length / 2;
+        
+        // --- 錘外筋（背景の大きな筋肉の輪郭） ---
+        ctx.fillStyle = "rgba(231, 76, 60, 0.2)";
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, halfL + 40, 100 + (500 - length)*0.1, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(231, 76, 60, 0.5)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // --- 筋紡錘の被膜（カプセル） ---
+        const capsuleW = halfL * 0.8;
+        const capsuleH = 30 + (500 - length)*0.05;
+        ctx.fillStyle = "rgba(189, 195, 199, 0.4)";
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, capsuleW, capsuleH, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#7f8c8d";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // --- 錘内筋（内部の線） ---
+        ctx.strokeStyle = "#c0392b";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        
+        // たゆみ具合の計算
+        if (tension >= 1) {
+            // 直線（張りがある）
+            ctx.moveTo(cx - capsuleW, cy);
+            ctx.lineTo(cx + capsuleW, cy);
+        } else {
+            // 波線（たゆんでいる）
+            const freq = 0.05;
+            const amp = 10 * (1 - tension);
+            for (let x = cx - capsuleW; x <= cx + capsuleW; x += 5) {
+                const y = cy + Math.sin(x * freq) * amp;
+                if (x === cx - capsuleW) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+        }
+        ctx.stroke();
+
+        // 中央の膨らみ（核袋線維などをイメージ）
+        ctx.fillStyle = "#e67e22";
+        ctx.beginPath();
+        let centerW = 40;
+        let centerH = 15;
+        if (tension > 1) {
+            centerW = 40 + (tension - 1) * 20; // 伸びる
+            centerH = 10; // 細くなる
+        } else if (tension < 1) {
+            centerW = 40 * tension; // 縮む
+            if(centerW < 20) centerW = 20;
+            centerH = 20; // 太くなる
+        }
+        ctx.ellipse(cx, cy, centerW, centerH, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // --- らせん終末（求心性神経の巻き付き） ---
+        ctx.strokeStyle = "#2980b9";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        const spirals = 8;
+        for (let i = -centerW; i <= centerW; i += 2) {
+            const progress = (i + centerW) / (centerW * 2);
+            const radius = centerH + 2;
+            const yOffset = Math.sin(progress * Math.PI * 2 * spirals) * radius;
+            const yPos = cy + yOffset;
+            if (i === -centerW) ctx.moveTo(cx + i, yPos);
+            else ctx.lineTo(cx + i, yPos);
+        }
+        ctx.stroke();
+
+        // --- 神経軸索（上へと伸びる線） ---
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - centerH - 2);
+        ctx.lineTo(cx, cy - 120);
+        ctx.lineTo(cx + 250, cy - 120);
+        ctx.stroke();
+    }
+
+    function drawLabels() {
+        ctx.fillStyle = "#333";
+        ctx.font = "14px sans-serif";
+        ctx.fillText("錘外筋 (Extrafusal muscle)", 50, 200);
+        ctx.fillText("筋紡錘・被膜", 230, 260);
+        ctx.fillText("錘内筋", 300, 190);
+        ctx.fillStyle = "#2980b9";
+        ctx.font = "bold 16px sans-serif";
+        ctx.fillText("Ia群 求心性神経", 550, 160);
+        ctx.fillText("活動電位（興奮頻度）→", 550, 190);
+    }
+
+    function updateAndDrawParticles(cx, cy) {
+        // 発火頻度の補間
+        currentFiringRate += (firingRate - currentFiringRate) * 0.05;
+
+        // 活動電位の生成 (完全に停止させる制限を解除し、ゆっくり発火するように修正)
+        if (frameCount % Math.max(2, Math.floor(currentFiringRate)) === 0) {
+            actionPotentials.push({ progress: 0 });
+        }
+
+        ctx.fillStyle = "#f1c40f";
+        ctx.shadowColor = "#f39c12";
+        ctx.shadowBlur = 10;
+
+        // 経路: (cx, cy) -> (cx, cy - 120) -> (cx + 250, cy - 120)
+        const path1Length = 120;
+        const path2Length = 250;
+        const totalLength = path1Length + path2Length;
+
+        for (let i = actionPotentials.length - 1; i >= 0; i--) {
+            let p = actionPotentials[i];
+            p.progress += 4; // 電位の移動速度
+
+            if (p.progress > totalLength) {
+                actionPotentials.splice(i, 1);
+                continue;
+            }
+
+            let px, py;
+            if (p.progress < path1Length) {
+                px = cx;
+                py = cy - p.progress;
+            } else {
+                px = cx + (p.progress - path1Length);
+                py = cy - path1Length;
+            }
+
+            ctx.beginPath();
+            ctx.arc(px, py, 5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.shadowBlur = 0; // リセット
+    }
+
+    function animate() {
+        // 値のスムーズな補間（アニメーション）
+        currentLength += (targetLength - currentLength) * 0.05;
+        currentIntrafusalTension += (targetIntrafusalTension - currentIntrafusalTension) * 0.05;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const cx = 400;
+        const cy = 250;
+
+        drawMuscleSpindle(cx, cy, currentLength, currentIntrafusalTension);
+        updateAndDrawParticles(cx, cy);
+        drawLabels();
+
+        frameCount++;
+        requestAnimationFrame(animate);
+    }
+
+    // アニメーション開始
+    animate();
+
+</script>
+</body>
+</html>
